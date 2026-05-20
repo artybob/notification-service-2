@@ -1,0 +1,219 @@
+{
+    "openapi": "3.0.0",
+    "info": {
+        "title": "Notification Service API",
+        "version": "1.0.0",
+        "description": "Микросервис для массовой рассылки уведомлений (SMS/Email) с поддержкой приоритетов",
+        "contact": {
+            "name": "Support",
+            "email": "support@notificationservice.com"
+        }
+    },
+    "servers": [
+        {
+            "url": "http://localhost:8000",
+            "description": "Local development server"
+        }
+    ],
+    "tags": [
+        {"name": "Notifications", "description": "Отправка уведомлений"},
+        {"name": "Subscribers", "description": "История подписчиков"},
+        {"name": "System", "description": "Системные методы"}
+    ],
+    "paths": {
+        "/api/v1/notifications/send": {
+            "post": {
+                "tags": ["Notifications"],
+                "summary": "Массовая рассылка уведомлений",
+                "description": "Отправляет SMS или Email сообщения нескольким получателям",
+                "operationId": "sendMassNotifications",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["channel", "message", "recipients", "idempotency_key"],
+                                "properties": {
+                                    "channel": {
+                                        "type": "string",
+                                        "enum": ["sms", "email"],
+                                        "example": "sms",
+                                        "description": "Канал доставки"
+                                    },
+                                    "message": {
+                                        "type": "string",
+                                        "example": "Your verification code: 123456",
+                                        "description": "Текст сообщения",
+                                        "maxLength": 5000
+                                    },
+                                    "recipients": {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                        "example": ["+79001234567", "+79007654321"],
+                                        "description": "Массив идентификаторов получателей",
+                                        "minItems": 1,
+                                        "maxItems": 1000
+                                    },
+                                    "priority": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 10,
+                                        "example": 5,
+                                        "default": 0,
+                                        "description": "Приоритет отправки (10 - наивысший)"
+                                    },
+                                    "idempotency_key": {
+                                        "type": "string",
+                                        "example": "unique_request_id_123",
+                                        "description": "Уникальный ключ для дедубликации запросов"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "202": {
+                        "description": "Уведомления успешно поставлены в очередь",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {"type": "string", "example": "Notifications queued successfully"},
+                                        "data": {
+                                            "type": "object",
+                                            "properties": {
+                                                "total": {"type": "integer", "example": 2},
+                                                "dispatched": {"type": "integer", "example": 2},
+                                                "channel": {"type": "string", "example": "sms"},
+                                                "priority": {"type": "integer", "example": 5},
+                                                "idempotency_key": {"type": "string", "example": "unique_request_id_123"}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "200": {
+                        "description": "Запрос уже был обработан (дедубликация)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {"type": "string", "example": "Request already processed"}
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Ошибка валидации",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {"type": "string"},
+                                        "errors": {"type": "object"}
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Внутренняя ошибка сервера"
+                    }
+                }
+            }
+        },
+        "/api/v1/subscribers/{subscriberId}/history": {
+            "get": {
+                "tags": ["Subscribers"],
+                "summary": "История уведомлений подписчика",
+                "description": "Возвращает все уведомления для указанного подписчика",
+                "operationId": "getSubscriberHistory",
+                "parameters": [
+                    {
+                        "name": "subscriberId",
+                        "in": "path",
+                        "required": true,
+                        "schema": {"type": "string"},
+                        "description": "Идентификатор подписчика (телефон или email)"
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "schema": {"type": "integer", "default": 50, "maximum": 500},
+                        "description": "Количество записей на странице"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Успешный ответ",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "subscriber_id": {"type": "string"},
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "id": {"type": "integer"},
+                                                    "subscriber_id": {"type": "string"},
+                                                    "channel": {"type": "string"},
+                                                    "message": {"type": "string"},
+                                                    "status": {"type": "string", "enum": ["queued", "sent", "delivered", "dropped"]},
+                                                    "created_at": {"type": "string", "format": "date-time"}
+                                                }
+                                            }
+                                        },
+                                        "meta": {
+                                            "type": "object",
+                                            "properties": {
+                                                "total": {"type": "integer"},
+                                                "per_page": {"type": "integer"},
+                                                "current_page": {"type": "integer"}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/health": {
+            "get": {
+                "tags": ["System"],
+                "summary": "Проверка состояния сервиса",
+                "description": "Возвращает статус микросервиса",
+                "operationId": "healthCheck",
+                "responses": {
+                    "200": {
+                        "description": "Сервис работает",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "status": {"type": "string", "example": "ok"},
+                                        "service": {"type": "string", "example": "Notification Service"},
+                                        "timestamp": {"type": "string", "format": "date-time"}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
