@@ -8,9 +8,12 @@ use App\Jobs\SendNotificationJob;
 use App\Services\IdempotencyService;
 use App\Enums\NotificationStatus;
 use Illuminate\Support\Facades\DB;
+use App\Traits\SwaggerAnnotations;
 
 class NotificationController extends Controller
 {
+    use SwaggerAnnotations;
+
     protected $idempotencyService;
 
     public function __construct(IdempotencyService $idempotencyService)
@@ -18,6 +21,37 @@ class NotificationController extends Controller
         $this->idempotencyService = $idempotencyService;
     }
 
+    /**
+     * @OA\Post(
+     *     path="/api/v1/notifications/send",
+     *     summary="Массовая рассылка уведомлений",
+     *     description="Отправляет SMS или Email сообщения нескольким получателям",
+     *     operationId="sendMassNotifications",
+     *     tags={"Notifications"},
+     *     @OA\RequestBody(
+     *         required=true,
+     *         @OA\JsonContent(ref="#/components/schemas/SendMassNotificationRequest")
+     *     ),
+     *     @OA\Response(
+     *         response=202,
+     *         description="Уведомления успешно поставлены в очередь",
+     *         @OA\JsonContent(ref="#/components/schemas/SendMassNotificationResponse")
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Запрос уже был обработан (дедубликация)"
+     *     ),
+     *     @OA\Response(
+     *         response=422,
+     *         description="Ошибка валидации",
+     *         @OA\JsonContent(ref="#/components/schemas/ErrorResponse")
+     *     ),
+     *     @OA\Response(
+     *         response=500,
+     *         description="Внутренняя ошибка сервера"
+     *     )
+     * )
+     */
     public function sendMass(SendMassNotificationRequest $request)
     {
         $validated = $request->validated();
@@ -70,6 +104,41 @@ class NotificationController extends Controller
         }
     }
 
+    /**
+     * @OA\Get(
+     *     path="/api/v1/subscribers/{subscriberId}/history",
+     *     summary="История уведомлений подписчика",
+     *     description="Возвращает все уведомления для указанного подписчика",
+     *     operationId="getSubscriberHistory",
+     *     tags={"Subscribers"},
+     *     @OA\Parameter(
+     *         name="subscriberId",
+     *         in="path",
+     *         required=true,
+     *         @OA\Schema(type="string"),
+     *         description="Идентификатор подписчика (телефон или email)"
+     *     ),
+     *     @OA\Parameter(
+     *         name="limit",
+     *         in="query",
+     *         @OA\Schema(type="integer", default=50, maximum=500),
+     *         description="Количество записей на странице"
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Успешный ответ",
+     *         @OA\JsonContent(
+     *             @OA\Property(property="subscriber_id", type="string"),
+     *             @OA\Property(property="data", type="array", @OA\Items(ref="#/components/schemas/Notification")),
+     *             @OA\Property(property="meta", type="object",
+     *                 @OA\Property(property="total", type="integer"),
+     *                 @OA\Property(property="per_page", type="integer"),
+     *                 @OA\Property(property="current_page", type="integer")
+     *             )
+     *         )
+     *     )
+     * )
+     */
     public function getSubscriberHistory($subscriberId)
     {
         $notifications = Notification::where('subscriber_id', $subscriberId)
