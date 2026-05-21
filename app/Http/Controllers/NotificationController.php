@@ -5,20 +5,22 @@ namespace App\Http\Controllers;
 use App\Http\Requests\SendMassNotificationRequest;
 use App\Models\Notification;
 use App\Jobs\SendNotificationJob;
+use App\Repositories\NotificationRepository;
 use App\Services\IdempotencyService;
 use App\Enums\NotificationStatus;
 use Illuminate\Support\Facades\DB;
-use App\Traits\SwaggerAnnotations;
 
 class NotificationController extends Controller
 {
-    use SwaggerAnnotations;
-
     protected $idempotencyService;
+    protected $repository;
 
-    public function __construct(IdempotencyService $idempotencyService)
-    {
+    public function __construct(
+        IdempotencyService $idempotencyService,
+        NotificationRepository $repository
+    ) {
         $this->idempotencyService = $idempotencyService;
+        $this->repository = $repository;
     }
 
     /**
@@ -67,7 +69,7 @@ class NotificationController extends Controller
         DB::beginTransaction();
         try {
             foreach ($validated['recipients'] as $recipient) {
-                $notification = Notification::create([
+                $notification = $this->repository->create([
                     'idempotency_key' => $validated['idempotency_key'] . ':' . $recipient,
                     'subscriber_id' => $recipient,
                     'channel' => $validated['channel'],
@@ -75,14 +77,14 @@ class NotificationController extends Controller
                     'status' => NotificationStatus::QUEUED->value,
                 ]);
 
-                SendNotificationJob::dispatch($notification)
+                SendNotificationJob::dispatch($notification->idempotency_key, $validated['priority'] ?? 0)
                     ->onQueue('notifications');
 
                 $dispatched[] = $recipient;
             }
 
             DB::commit();
-            $this->idempotencyService->markAsProcessed($validated['idempotency_key']);
+            $this->idempotencyService->markAsProcessed($validated['idempotency_key'], []);
 
             return response()->json([
                 'message' => 'Notifications queued successfully',
@@ -141,9 +143,8 @@ class NotificationController extends Controller
      */
     public function getSubscriberHistory($subscriberId)
     {
-        $notifications = Notification::where('subscriber_id', $subscriberId)
-            ->orderBy('created_at', 'desc')
-            ->paginate(50);
+        $limit = request()->get('limit', 50);
+        $notifications = $this->repository->getBySubscriber($subscriberId, $limit);
 
         return response()->json([
             'subscriber_id' => $subscriberId,

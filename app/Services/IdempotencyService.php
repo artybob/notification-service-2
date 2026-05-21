@@ -13,7 +13,7 @@ class IdempotencyService
         return Redis::exists("idempotency:{$idempotencyKey}") === 1;
     }
 
-    public function markAsProcessed(string $idempotencyKey, array $result): void
+    public function markAsProcessed(string $idempotencyKey, array $result = []): void
     {
         Redis::setex(
             "idempotency:{$idempotencyKey}",

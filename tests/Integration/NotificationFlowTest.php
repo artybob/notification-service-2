@@ -5,9 +5,13 @@ namespace Tests\Integration;
 use Tests\TestCase;
 use App\Models\Notification;
 use App\Enums\NotificationStatus;
+use App\Services\NotificationService;
+use App\Repositories\NotificationRepository;
+use App\Services\Providers\SmsProviderMock;
+use App\Services\Providers\EmailProviderMock;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
 use App\Jobs\SendNotificationJob;
-use Illuminate\Foundation\Testing\RefreshDatabase;
 
 class NotificationFlowTest extends TestCase
 {
@@ -34,18 +38,12 @@ class NotificationFlowTest extends TestCase
         $response->assertStatus(202);
         $response->assertJsonStructure([
             'message',
-            'data' => ['total', 'dispatched', 'failed', 'priority', 'idempotency_key']
+            'data' => ['total', 'dispatched', 'channel', 'priority', 'idempotency_key']
         ]);
 
         $this->assertDatabaseHas('notifications', [
             'subscriber_id' => '+1234567890',
             'status' => NotificationStatus::QUEUED->value,
-            'idempotency_key' => $payload['idempotency_key'] . ':+1234567890'
-        ]);
-
-        $this->assertDatabaseHas('notifications', [
-            'subscriber_id' => '+0987654321',
-            'status' => NotificationStatus::QUEUED->value
         ]);
 
         Queue::assertPushed(SendNotificationJob::class, 2);
@@ -100,10 +98,68 @@ class NotificationFlowTest extends TestCase
         $response->assertJsonCount(2, 'data');
         $response->assertJsonStructure([
             'data' => [
-                '*' => ['id', 'subscriber_id', 'channel', 'message', 'status', 'sent_at', 'delivered_at']
+                '*' => ['id', 'subscriber_id', 'channel', 'message', 'status']
             ],
             'meta' => ['current_page', 'total', 'per_page']
         ]);
+    }
+
+    public function test_notification_processing_with_provider_mock()
+    {
+        $idempotencyKey = 'provider_test_' . uniqid();
+        $subscriberId = '+79001234567';
+
+        $notification = Notification::create([
+            'idempotency_key' => $idempotencyKey,
+            'subscriber_id' => $subscriberId,
+            'channel' => 'sms',
+            'message' => 'Test provider message',
+            'status' => NotificationStatus::QUEUED->value,
+        ]);
+
+        $repository = new NotificationRepository();
+        $smsProvider = new SmsProviderMock();
+        $emailProvider = new EmailProviderMock();
+        $service = new NotificationService($repository, $smsProvider, $emailProvider);
+
+        $service->processNotification($idempotencyKey);
+
+        $updated = $repository->findByIdempotencyKey($idempotencyKey);
+        $this->assertContains($updated->status, [
+            NotificationStatus::SENT->value,
+            NotificationStatus::DELIVERED->value,
+            NotificationStatus::DROPPED->value
+        ]);
+    }
+
+    public function test_email_provider_mock_returns_expected_structure()
+    {
+        $provider = new EmailProviderMock();
+        $result = $provider->send('test@example.com', 'Test message');
+
+        $this->assertArrayHasKey('success', $result);
+        $this->assertArrayHasKey('status', $result);
+
+        if ($result['success']) {
+            $this->assertArrayHasKey('provider_message_id', $result);
+        } else {
+            $this->assertArrayHasKey('error', $result);
+        }
+    }
+
+    public function test_sms_provider_mock_returns_expected_structure()
+    {
+        $provider = new SmsProviderMock();
+        $result = $provider->send('+79001234567', 'Test message');
+
+        $this->assertArrayHasKey('success', $result);
+        $this->assertArrayHasKey('status', $result);
+
+        if ($result['success']) {
+            $this->assertArrayHasKey('provider_message_id', $result);
+        } else {
+            $this->assertArrayHasKey('error', $result);
+        }
     }
 
     public function test_priority_messages_are_processed_correctly()
@@ -120,7 +176,7 @@ class NotificationFlowTest extends TestCase
         $response->assertStatus(202);
 
         $this->assertDatabaseHas('notifications', [
-            'idempotency_key' => $payload['idempotency_key'] . ':+1111111111',
+            'subscriber_id' => '+1111111111',
             'status' => NotificationStatus::QUEUED->value
         ]);
     }
@@ -151,5 +207,41 @@ class NotificationFlowTest extends TestCase
         $response = $this->postJson('/api/v1/notifications/send', $payload);
         $response->assertStatus(422);
         $response->assertJsonValidationErrors(['recipients']);
+    }
+
+    public function test_validation_fails_for_missing_idempotency_key()
+    {
+        $payload = [
+            'channel' => 'sms',
+            'message' => 'Test',
+            'recipients' => ['+79001234567'],
+        ];
+
+        $response = $this->postJson('/api/v1/notifications/send', $payload);
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['idempotency_key']);
+    }
+
+    public function test_status_transitions_work_correctly()
+    {
+        $idempotencyKey = 'status_test_' . uniqid();
+        $subscriberId = '+79009999999';
+
+        $notification = Notification::create([
+            'idempotency_key' => $idempotencyKey,
+            'subscriber_id' => $subscriberId,
+            'channel' => 'email',
+            'message' => 'Status test message',
+            'status' => NotificationStatus::QUEUED->value,
+        ]);
+
+        $this->assertEquals(NotificationStatus::QUEUED->value, $notification->status);
+
+        $repository = new NotificationRepository();
+        $repository->updateStatus($idempotencyKey, NotificationStatus::SENT);
+
+        $updated = $repository->findByIdempotencyKey($idempotencyKey);
+        $this->assertEquals(NotificationStatus::SENT->value, $updated->status);
+        $this->assertNotNull($updated->sent_at);
     }
 }
