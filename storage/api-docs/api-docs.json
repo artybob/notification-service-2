@@ -138,42 +138,6 @@
                     }
                 }
             }
-        },
-        "/api/v1/health": {
-            "get": {
-                "tags": [
-                    "System"
-                ],
-                "summary": "Проверка состояния сервиса",
-                "description": "Возвращает статус микросервиса",
-                "operationId": "healthCheck",
-                "responses": {
-                    "200": {
-                        "description": "Сервис работает",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "properties": {
-                                        "status": {
-                                            "type": "string",
-                                            "example": "ok"
-                                        },
-                                        "service": {
-                                            "type": "string",
-                                            "example": "Notification Service"
-                                        },
-                                        "timestamp": {
-                                            "type": "string",
-                                            "format": "date-time"
-                                        }
-                                    },
-                                    "type": "object"
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
     },
     "components": {
